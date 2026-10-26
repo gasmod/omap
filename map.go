@@ -1,10 +1,6 @@
 package omap
 
-import (
-	"iter"
-	"maps"
-	"slices"
-)
+import "iter"
 
 // Map is an ordered map from keys of type Key to values of type Value. It
 // produces its entries in the order their keys were first stored; see the
@@ -21,31 +17,24 @@ import (
 type Map[Key comparable, Value any] struct {
 	noCopy noCopy
 
-	idx     map[Key]int
-	entries []entry[Key, Value]
-	clears  int
+	core core[Key, Value]
 }
 
 // Len returns the number of entries in m, including entries with NaN keys.
 func (m *Map[Key, Value]) Len() int {
-	return len(m.idx)
+	return m.core.len()
 }
 
 // Has reports whether key is present in m. It always reports false for a NaN
 // key.
 func (m *Map[Key, Value]) Has(key Key) bool {
-	_, ok := m.idx[key]
-	return ok
+	return m.core.has(key)
 }
 
 // Load returns the value stored in m for key, or the zero value if no value
 // is present. The ok result reports whether a value was found.
 func (m *Map[Key, Value]) Load(key Key) (value Value, ok bool) {
-	if i, ok := m.idx[key]; ok {
-		return m.entries[i].value, true
-	}
-	var zero Value
-	return zero, false
+	return m.core.load(key)
 }
 
 // Store sets the value for key. If key is not present, a new entry is added
@@ -53,61 +42,33 @@ func (m *Map[Key, Value]) Load(key Key) (value Value, ok bool) {
 // its value and its key are replaced, so a later iteration produces the key
 // passed to the most recent Store (for example -0.0 after +0.0).
 func (m *Map[Key, Value]) Store(key Key, value Value) {
-	if m.idx == nil {
-		m.idx = make(map[Key]int)
-	}
-	if i, ok := m.idx[key]; ok {
-		m.entries[i].key = key // for -0 == +0
-		m.entries[i].value = value
-	} else {
-		m.entries = append(m.entries, entry[Key, Value]{key: key, value: value})
-		m.idx[key] = len(m.entries) - 1
-	}
+	m.core.store(key, value)
 }
 
 // Clear deletes all the entries, including entries with NaN keys, resulting
 // in an empty Map. The storage used for the entries is kept for reuse.
 func (m *Map[Key, Value]) Clear() {
-	m.idx = make(map[Key]int)
-	m.entries = slices.Delete(m.entries, 0, len(m.entries))
-	m.clears++
+	m.core.clear()
 }
 
 // LoadOrStore returns the existing value for key if present. Otherwise, it
 // stores value as Store does and returns it. The loaded result is true if
 // the value was loaded, false if stored.
 func (m *Map[Key, Value]) LoadOrStore(key Key, value Value) (actual Value, loaded bool) {
-	if v, ok := m.Load(key); ok {
-		return v, true
-	}
-	m.Store(key, value)
-	return value, false
+	return m.core.loadOrStore(key, value)
 }
 
 // LoadAndDelete deletes the entry for key, returning its value if any. The
 // loaded result reports whether key was present.
 func (m *Map[Key, Value]) LoadAndDelete(key Key) (value Value, loaded bool) {
-	if v, ok := m.Load(key); ok {
-		m.Delete(key)
-		return v, true
-	}
-	var zero Value
-	return zero, false
+	return m.core.loadAndDelete(key)
 }
 
 // Delete deletes the entry for key. It is a no-op if key is not present. The
-// remaining entries keep their relative order. Delete takes time
-// proportional to the number of entries in m.
+// remaining entries keep their relative order. Delete takes amortized
+// constant time.
 func (m *Map[Key, Value]) Delete(key Key) {
-	idx, ok := m.idx[key]
-	if !ok {
-		return
-	}
-	m.entries = slices.Delete(m.entries, idx, idx+1)
-	m.idx = make(map[Key]int)
-	for i, e := range m.entries {
-		m.idx[e.key] = i
-	}
+	m.core.delete(key)
 }
 
 // Swap replaces the value for key if key is present and returns the previous
@@ -116,13 +77,7 @@ func (m *Map[Key, Value]) Delete(key Key) {
 // returns the zero value and false; unlike [sync.Map.Swap], it does not store
 // a missing key.
 func (m *Map[Key, Value]) Swap(key Key, value Value) (previous Value, loaded bool) {
-	previous, loaded = m.Load(key)
-	if !loaded {
-		var zero Value
-		return zero, false
-	}
-	m.Store(key, value)
-	return previous, true
+	return m.core.swap(key, value)
 }
 
 // CompareAndSwap stores value for key if key is present and comp(old, value)
@@ -159,39 +114,23 @@ func (m *Map[Key, Value]) CompareAndDelete(
 // Range calls f sequentially for each key and value in m, in insertion
 // order. If f returns false, Range stops the iteration.
 //
-// The iteration follows the rules of ranging over a builtin map. An entry
-// that is deleted before it is reached is not produced. An entry that is
-// added during the iteration, including a key that is deleted and stored
-// again, may be produced or skipped. Each value produced is the value stored
-// for its key at the moment it is produced, and no key is produced twice.
-// Entries with NaN keys are produced, unless m is cleared before they are
-// reached.
+// The iteration follows the rules of ranging over a builtin map, with one
+// stricter guarantee: an entry added during the iteration, including a key
+// that is deleted and stored again, is never produced. An entry that is
+// deleted before it is reached is not produced. Each value produced is the
+// value stored for its key at the moment it is produced, and no key is
+// produced twice. Entries with NaN keys are produced, unless m is cleared
+// before they are reached.
 //
 // f may call any method of m, including ones that modify it.
 //
-// Range copies the list of entries before the first call to f, so it takes
-// time and memory proportional to the number of entries even if f returns
-// false after a constant number of calls.
+// Range does not copy the list of entries, so it allocates no memory, and
+// it stops without visiting the remaining entries when f returns false.
 func (m *Map[Key, Value]) Range(f func(key Key, value Value) bool) {
-	entries := slices.Clone(m.entries)
-	clears := m.clears
-	for _, e := range entries {
-		if _, ok := m.idx[e.key]; !ok {
-			// nolint:gocritic // a NaN key wouldn't satisfy e.key == e.key
-			if e.key == e.key {
-				continue
-			}
-			if clears != m.clears {
-				return
-			}
-		}
-
-		cur := e
-		// nolint:gocritic // a NaN key wouldn't satisfy e.key == e.key
-		if e.key == e.key {
-			cur = m.entries[m.idx[e.key]]
-		}
-		if !f(cur.key, cur.value) {
+	cur := m.core.cursor()
+	for {
+		key, value, ok := m.core.next(&cur)
+		if !ok || !f(key, value) {
 			return
 		}
 	}
@@ -229,10 +168,7 @@ func (m *Map[Key, Value]) Values() iter.Seq[Value] {
 // shallow clone: keys and values are copied using ordinary assignment. The
 // clone and m are independent; changes to one do not affect the other.
 func (m *Map[Key, Value]) Clone() *Map[Key, Value] {
-	return &Map[Key, Value]{
-		idx:     maps.Clone(m.idx),
-		entries: slices.Clone(m.entries),
-	}
+	return &Map[Key, Value]{core: m.core.clone()}
 }
 
 // noCopy is embedded in Map so that go vet's copylocks check reports copies

@@ -101,13 +101,14 @@ key and storing it again moves it to the end.
 
 ### Changing the map while iterating
 
-Iteration follows the rules of ranging over a builtin map, so the function
-passed to `Range` (or the body of a `for range` over `All`, `Keys` or
-`Values`) may modify the map:
+Iteration follows the rules of ranging over a builtin map, with one stricter
+guarantee about added entries, so the function passed to `Range` (or the body
+of a `for range` over `All`, `Keys` or `Values`) may modify the map:
 
 - An entry deleted before iteration reaches it is not produced.
 - An entry added during iteration, including a key deleted and stored again,
-  may be produced or skipped.
+  is never produced. A builtin map may produce or skip such entries; `omap`
+  always skips them.
 - Each value produced is the value stored for its key at that moment, and no
   key is produced twice.
 
@@ -147,15 +148,13 @@ embeds a marker that vet's copylocks check recognizes.
 
 ## Performance
 
-| Operation                                | Cost                                                                                                                                       |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Len`, `Has`, `Load`                     | Constant time.                                                                                                                             |
-| `Store`                                  | Amortized constant time.                                                                                                                   |
-| `Delete` and the methods that may delete | Proportional to the number of entries, since later entries are shifted and re-indexed.                                                     |
-| `Range`, `All`, `Keys`, `Values`         | Each iteration first copies the list of entries, so it takes time and memory proportional to the number of entries even if it stops early. |
-| `Clone`                                  | Proportional to the number of entries.                                                                                                     |
-
-If your workload deletes often from large maps, measure before adopting it.
+| Operation                                | Cost                                                                                                                                         |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Len`, `Has`, `Load`                     | Constant time.                                                                                                                               |
+| `Store`                                  | Amortized constant time.                                                                                                                     |
+| `Delete` and the methods that may delete | Amortized constant time. Deleted entries are dropped once they reach the end of the list or make up half of it.                              |
+| `Range`, `All`, `Keys`, `Values`         | Proportional to the number of entries visited. Iteration walks the list in place, allocates nothing, and stops as soon as `f` returns false. |
+| `Clone`                                  | Proportional to the number of entries.                                                                                                       |
 
 ## Development
 

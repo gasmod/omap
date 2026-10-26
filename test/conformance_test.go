@@ -58,6 +58,7 @@ func runConformance(t *testing.T, newMap func() orderedMap[string, int]) {
 	}
 	t.Run("EarlyBreak", func(t *testing.T) { testEarlyBreak(t, newMap) })
 	t.Run("MutateDuringIteration", func(t *testing.T) { testMutateDuringIteration(t, newMap) })
+	t.Run("DeleteLastEntry", func(t *testing.T) { testDeleteLastEntry(t, newMap()) })
 }
 
 func testZeroValue(t *testing.T, m orderedMap[string, int]) {
@@ -313,6 +314,23 @@ func testMutateDuringIteration(t *testing.T, newMap func() orderedMap[string, in
 				}
 			}
 		})
+	}
+}
+
+// testDeleteLastEntry checks that deleting the last entry does no work for
+// the entries before it. Delete takes amortized constant time, and a deleted
+// entry at the end of the list is dropped at once, so deleting the last entry
+// and storing it again should not allocate, as with a builtin map.
+func testDeleteLastEntry(t *testing.T, m orderedMap[string, int]) {
+	for i := range 1000 {
+		m.Store(fmt.Sprint(i), i)
+	}
+	allocs := testing.AllocsPerRun(100, func() {
+		m.Delete("999")
+		m.Store("999", 999)
+	})
+	if allocs != 0 {
+		t.Errorf("Delete and Store of the last entry made %v allocations, want 0", allocs)
 	}
 }
 

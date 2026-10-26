@@ -2,8 +2,6 @@ package omap
 
 import (
 	"iter"
-	"maps"
-	"slices"
 	"sync"
 )
 
@@ -21,10 +19,8 @@ import (
 // The zero SyncMap is empty and ready for use. A SyncMap must not be copied
 // after first use. Use [SyncMap.Clone] to copy a SyncMap.
 type SyncMap[Key comparable, Value any] struct {
-	idx     map[Key]int
-	entries []entry[Key, Value]
-	clears  int
-	mu      sync.RWMutex
+	core core[Key, Value]
+	mu   sync.RWMutex
 }
 
 // Len returns the number of entries in m, including entries with NaN keys.
@@ -32,7 +28,7 @@ func (m *SyncMap[Key, Value]) Len() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return len(m.idx)
+	return m.core.len()
 }
 
 // Has reports whether key is present in m. It always reports false for a NaN
@@ -41,12 +37,7 @@ func (m *SyncMap[Key, Value]) Has(key Key) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return m.has(key)
-}
-
-func (m *SyncMap[Key, Value]) has(key Key) bool {
-	_, ok := m.idx[key]
-	return ok
+	return m.core.has(key)
 }
 
 // Load returns the value stored in m for key, or the zero value if no value
@@ -55,16 +46,7 @@ func (m *SyncMap[Key, Value]) Load(key Key) (value Value, ok bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return m.load(key)
-}
-
-func (m *SyncMap[Key, Value]) load(key Key) (Value, bool) {
-	i, ok := m.idx[key]
-	if ok {
-		return m.entries[i].value, true
-	}
-	var zero Value
-	return zero, false
+	return m.core.load(key)
 }
 
 // Store sets the value for key. If key is not present, a new entry is added
@@ -75,20 +57,7 @@ func (m *SyncMap[Key, Value]) Store(key Key, value Value) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.store(key, value)
-}
-
-func (m *SyncMap[Key, Value]) store(key Key, value Value) {
-	if m.idx == nil {
-		m.idx = make(map[Key]int)
-	}
-	if i, ok := m.idx[key]; ok {
-		m.entries[i].key = key // for -0 == +0
-		m.entries[i].value = value
-	} else {
-		m.entries = append(m.entries, entry[Key, Value]{key: key, value: value})
-		m.idx[key] = len(m.entries) - 1
-	}
+	m.core.store(key, value)
 }
 
 // Clear deletes all the entries, including entries with NaN keys, resulting
@@ -97,9 +66,7 @@ func (m *SyncMap[Key, Value]) Clear() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.idx = make(map[Key]int)
-	m.entries = slices.Delete(m.entries, 0, len(m.entries))
-	m.clears++
+	m.core.clear()
 }
 
 // LoadOrStore returns the existing value for key if present. Otherwise, it
@@ -110,11 +77,7 @@ func (m *SyncMap[Key, Value]) LoadOrStore(key Key, value Value) (actual Value, l
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if actual, loaded = m.load(key); loaded {
-		return actual, true
-	}
-	m.store(key, value)
-	return value, false
+	return m.core.loadOrStore(key, value)
 }
 
 // LoadAndDelete deletes the entry for key, returning its value if any. The
@@ -124,34 +87,17 @@ func (m *SyncMap[Key, Value]) LoadAndDelete(key Key) (value Value, loaded bool) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if value, loaded = m.load(key); loaded {
-		m.delete(key)
-		return value, true
-	}
-	var zero Value
-	return zero, false
+	return m.core.loadAndDelete(key)
 }
 
 // Delete deletes the entry for key. It is a no-op if key is not present. The
-// remaining entries keep their relative order. Delete takes time
-// proportional to the number of entries in m.
+// remaining entries keep their relative order. Delete takes amortized
+// constant time.
 func (m *SyncMap[Key, Value]) Delete(key Key) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.delete(key)
-}
-
-func (m *SyncMap[Key, Value]) delete(key Key) {
-	idx, ok := m.idx[key]
-	if !ok {
-		return
-	}
-	m.entries = slices.Delete(m.entries, idx, idx+1)
-	m.idx = make(map[Key]int)
-	for i, e := range m.entries {
-		m.idx[e.key] = i
-	}
+	m.core.delete(key)
 }
 
 // Swap replaces the value for key if key is present and returns the previous
@@ -163,13 +109,7 @@ func (m *SyncMap[Key, Value]) Swap(key Key, value Value) (previous Value, loaded
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	previous, loaded = m.load(key)
-	if !loaded {
-		var zero Value
-		return zero, false
-	}
-	m.store(key, value)
-	return previous, true
+	return m.core.swap(key, value)
 }
 
 // CompareAndSwap stores value for key if key is present and comp(old, value)
@@ -185,8 +125,8 @@ func (m *SyncMap[Key, Value]) CompareAndSwap(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if v, ok := m.load(key); ok && comp(v, value) {
-		m.store(key, value)
+	if v, ok := m.core.load(key); ok && comp(v, value) {
+		m.core.store(key, value)
 		return true
 	}
 	return false
@@ -204,8 +144,8 @@ func (m *SyncMap[Key, Value]) CompareAndDelete(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if v, ok := m.load(key); ok && comp(v) {
-		m.delete(key)
+	if v, ok := m.core.load(key); ok && comp(v) {
+		m.core.delete(key)
 		return true
 	}
 	return false
@@ -214,49 +154,31 @@ func (m *SyncMap[Key, Value]) CompareAndDelete(
 // Range calls f sequentially for each key and value in m, in insertion
 // order. If f returns false, Range stops the iteration.
 //
-// The iteration follows the rules of ranging over a builtin map. An entry
-// that is deleted before it is reached is not produced. An entry that is
-// added during the iteration, including a key that is deleted and stored
-// again, may be produced or skipped. Each value produced is the value stored
-// for its key at the moment it is produced, and no key is produced twice.
-// Entries with NaN keys are produced, unless m is cleared before they are
-// reached.
+// The iteration follows the rules of ranging over a builtin map, with one
+// stricter guarantee: an entry added during the iteration, including a key
+// that is deleted and stored again, is never produced. An entry that is
+// deleted before it is reached is not produced. Each value produced is the
+// value stored for its key at the moment it is produced, and no key is
+// produced twice. Entries with NaN keys are produced, unless m is cleared
+// before they are reached.
 //
 // f is called without holding the lock on m, so f may call any method of m.
 // Range does not correspond to any consistent snapshot of the map's
 // contents: if entries are stored or deleted concurrently, including by f,
 // the rules above apply to those changes as well.
 //
-// Range copies the list of entries before the first call to f, so it takes
-// time and memory proportional to the number of entries even if f returns
-// false after a constant number of calls.
+// Range does not copy the list of entries, so it allocates no memory, and
+// it stops without visiting the remaining entries when f returns false.
 func (m *SyncMap[Key, Value]) Range(f func(key Key, value Value) bool) {
 	m.mu.RLock()
-	entries := slices.Clone(m.entries)
-	clears := m.clears
+	cur := m.core.cursor()
 	m.mu.RUnlock()
 
-	for _, e := range entries {
+	for {
 		m.mu.RLock()
-		if _, ok := m.idx[e.key]; !ok {
-			// nolint:gocritic // a NaN key wouldn't satisfy e.key == e.key
-			if e.key == e.key {
-				m.mu.RUnlock()
-				continue
-			}
-			if clears != m.clears {
-				m.mu.RUnlock()
-				return
-			}
-		}
-
-		cur := e
-		// nolint:gocritic // a NaN key wouldn't satisfy e.key == e.key
-		if e.key == e.key {
-			cur = m.entries[m.idx[e.key]]
-		}
+		key, value, ok := m.core.next(&cur)
 		m.mu.RUnlock()
-		if !f(cur.key, cur.value) {
+		if !ok || !f(key, value) {
 			return
 		}
 	}
@@ -298,8 +220,5 @@ func (m *SyncMap[K, V]) Clone() *SyncMap[K, V] {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return &SyncMap[K, V]{
-		idx:     maps.Clone(m.idx),
-		entries: slices.Clone(m.entries),
-	}
+	return &SyncMap[K, V]{core: m.core.clone()}
 }

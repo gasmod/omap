@@ -34,9 +34,8 @@
 //
 // # Complexity
 //
-// Len, Has, Load and Store take constant (amortized) time. Delete, and the
-// methods that may delete, take time proportional to the number of entries,
-// since the entries after the deleted one are shifted and re-indexed. Each
-// iteration first copies the list of entries, so it takes time and memory
-// proportional to the number of entries even if it stops early.
+// Len, Has, Load, Store and Delete, and the methods built on them, take
+// constant (amortized) time. Delete only marks an entry as deleted; deleted
+// entries are dropped once they reach the end of the list or make up half of
+// it. Iteration walks the list in place, without copying it.
 package omap
