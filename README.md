@@ -28,7 +28,7 @@ m.Store("cherry", 7)
 m.Store("banana", 5) // overwriting keeps the original position
 
 for k, v := range m.All() {
-	fmt.Println(k, v)
+  fmt.Println(k, v)
 }
 // banana 5
 // apple 1
@@ -41,7 +41,7 @@ fmt.Println(m.Len())          // 3
 fmt.Println(m.Load("banana")) // 9 true
 fmt.Println(m.Has("durian"))  // false
 for k := range m.Keys() {
-	fmt.Print(k, " ")
+  fmt.Print(k, " ")
 }
 // apple cherry banana
 ```
@@ -55,14 +55,14 @@ m.Store("hits", 0)
 
 var wg sync.WaitGroup
 for range 8 {
-	wg.Go(func() {
-		for {
-			cur, _ := m.Load("hits")
-			if m.CompareAndSwap("hits", cur+1, func(old, _ int) bool { return old == cur }) {
-				return
-			}
-		}
-	})
+  wg.Go(func() {
+    for {
+      cur, _ := m.Load("hits")
+      if m.CompareAndSwap("hits", cur+1, func(old, _ int) bool { return old == cur }) {
+        return
+      }
+    }
+  })
 }
 wg.Wait()
 
