@@ -1,0 +1,80 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+  tests: true
+
+linters:
+  enable:
+    # Bugs & correctness
+    - errcheck
+    - govet
+    - staticcheck
+    - bodyclose
+    - nilerr
+    - sqlclosecheck
+    - contextcheck
+
+    # Style & consistency
+    - revive
+    - misspell
+    - whitespace
+    - unconvert
+    - predeclared
+
+    # Complexity & maintainability
+    - gocyclo
+    - gocognit
+    - cyclop
+    - funlen
+    - nestif
+
+    # Performance
+    - prealloc
+    - gocritic
+
+    # Security
+    - gosec
+
+    # Error handling
+    - errorlint
+    - wrapcheck
+
+    # Unused code
+    - unused
+    - unparam
+    - wastedassign
+
+  settings:
+    govet:
+      enable-all: true
+
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+
+    misspell:
+      locale: US
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines
+
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/gasmod/omap)
+
+output:
+  sort-order:
+    - linter
+    - severity
+    - file
