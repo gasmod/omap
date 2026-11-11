@@ -16,7 +16,7 @@ value of either type is an empty map, ready to use.
 go get github.com/gasmod/omap
 ```
 
-The module requires Go 1.27.3 or later.
+The module requires Go 1.24 or later.
 
 ## Usage
 
