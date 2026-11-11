@@ -181,10 +181,13 @@ func race(n int, f func(i int)) {
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 	for i := range n {
-		wg.Go(func() {
+		// Add and Done rather than WaitGroup.Go, which needs Go 1.25.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			<-start
 			f(i)
-		})
+		}()
 	}
 	close(start)
 	wg.Wait()
